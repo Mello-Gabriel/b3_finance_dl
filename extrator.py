@@ -1,36 +1,68 @@
+"""Single module to extract financial data from Yahoo Finance API."""
+
+import os
+
+import awswrangler as wr
 import pandas as pd
 import yfinance as yf
-import boto3
-import io
+from dotenv import load_dotenv
+
+load_dotenv()
+
+ambiente = os.environ.get("AMBIENTE")
+
+tickers = [
+    "BOVA11.SA",
+    "VALE3.SA",
+    "ITUB4.SA",
+    "PETR4.SA",
+    "BBDC4.SA",
+    "ELET3.SA",
+    "PETR3.SA",
+    "SBSP3.SA",
+    "BPAC11.SA",
+    "WEGE3.SA",
+    "B3SA3.SA",
+    "ITSA4.SA",
+    "EMBR3.SA",
+    "BBAS3.SA",
+    "ABEV3.SA",
+    "EQTL3.SA",
+    "RDOR3.SA",
+    "RENT3.SA",
+    "ENEV3.SA",
+    "SUZB3.SA",
+]
 
 
-def lambda_handler(event, context):
-    buffer = io.BytesIO()
+def yfinance_handler(tickers: list[str]) -> pd.DataFrame:
+    """Get financial data from Yahoo Finance API."""
+    yf_ticker = yf.Tickers(tickers)
+    df = yf_ticker.history(period="1y", interval="1d")
+    df = df.stack(level=0, future_stack=True).reset_index()
+    df = df.rename(columns={"level_0": "ticker"})
+    df.columns.name = None
+    df.columns = [column.lower().strip().replace(" ", "_") for column in df.columns]
+    df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+    return df
 
-    dados_acoes = ["PETR4.SA", "SUZ"]
 
-    download = yf.download(dados_acoes, period="1d")
+def main():
+    """Extract, transform and load financial data to S3."""
+    df = yfinance_handler(tickers)
+    df = df.rename(columns={"date": "Date"})
+    bucket_name = os.environ.get("S3_BUCKET")
+    path = f"s3://{bucket_name}/raw/"
 
-    download = download.stack().reset_index()
-
-    download["Date"] = download["Date"].astype(str)
-
-    date_ref = download["Date"].iloc[0]
-
-    file_name = f"raw/Date={date_ref}/raw_data.parquet"
-
-    download.columns = [column.lower().replace(" ", "_") for column in download.columns]
-
-    download.to_parquet(buffer, index=False)
-
-    s3 = boto3.client("s3")
-
-    bucket_name = "techchallenge-02-gabriel"
-
-    s3.put_object(Bucket=bucket_name, Key=file_name, Body=buffer.getvalue())
-
-    return {"statusCode": 200, "body": f"Arquivo salvo com sucesso em {file_name}"}
+    wr.s3.to_parquet(
+        df=df.copy(),
+        path=path,
+        dataset=True,
+        use_threads=True,
+        partition_cols=["Date"],
+        mode="overwrite_partitions",
+    )
 
 
 if __name__ == "__main__":
-    lambda_handler(None, None)
+    main()

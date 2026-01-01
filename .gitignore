@@ -16,3 +16,6 @@ wheels/
 .mypy_cache/
 .mypy
 *.csv
+
+# Environment secrets
+.env
