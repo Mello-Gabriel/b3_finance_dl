@@ -3,6 +3,7 @@
 import os
 
 import awswrangler as wr
+import boto3
 import pandas as pd
 import yfinance as yf
 from dotenv import load_dotenv
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ambiente = os.environ.get("AMBIENTE")
+bucket_name = os.environ.get("S3_BUCKET")
 
 tickers = [
     "BOVA11.SA",
@@ -39,10 +41,12 @@ def yfinance_handler(tickers: list[str]) -> pd.DataFrame:
     """Get financial data from Yahoo Finance API."""
     yf_ticker = yf.Tickers(tickers)
     df = yf_ticker.history(period="1y", interval="1d")
-    df = df.stack(level=0, future_stack=True).reset_index()
-    df = df.rename(columns={"level_0": "ticker"})
+    df = df.stack().reset_index()
     df.columns.name = None
     df.columns = [column.lower().strip().replace(" ", "_") for column in df.columns]
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+    df["day"] = df["date"].dt.day
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
     return df
 
@@ -50,8 +54,6 @@ def yfinance_handler(tickers: list[str]) -> pd.DataFrame:
 def main():
     """Extract, transform and load financial data to S3."""
     df = yfinance_handler(tickers)
-    df = df.rename(columns={"date": "Date"})
-    bucket_name = os.environ.get("S3_BUCKET")
     path = f"s3://{bucket_name}/raw/"
 
     wr.s3.to_parquet(
@@ -59,9 +61,11 @@ def main():
         path=path,
         dataset=True,
         use_threads=True,
-        partition_cols=["Date"],
+        partition_cols=["date"],
         mode="overwrite_partitions",
     )
+    cliente = boto3.client("s3")
+    cliente.put_object(Bucket=bucket_name, Key="raw/trigger_lambda.txt", Body="")
 
 
 if __name__ == "__main__":
